@@ -381,7 +381,7 @@ export function cleanupCorruptedConnections(workflow: Workflow): number {
     }
   }
   
-  // Apply the fixes
+  // Apply the fixes for connection keys
   for (const fix of connectionsToFix) {
     // Remove the corrupted entry
     delete workflow.connections[fix.oldKey];
@@ -410,6 +410,29 @@ export function cleanupCorruptedConnections(workflow: Workflow): number {
         }
       }
       fixedCount++;
+    }
+  }
+  
+  // Fix target node references that use IDs instead of names
+  for (const [sourceNodeName, connections] of Object.entries(workflow.connections)) {
+    for (const [connectionType, connectionArrays] of Object.entries(connections)) {
+      if (Array.isArray(connectionArrays)) {
+        for (const connectionArray of connectionArrays) {
+          if (Array.isArray(connectionArray)) {
+            for (const connection of connectionArray) {
+              // Check if target node reference is using ID instead of name
+              const targetNodeById = findNodeById(workflow, connection.node);
+              const targetNodeByName = findNodeByName(workflow, connection.node);
+              
+              if (targetNodeById && !targetNodeByName) {
+                // This target node reference is using ID instead of name - fix it
+                connection.node = targetNodeById.name;
+                fixedCount++;
+              }
+            }
+          }
+        }
+      }
     }
   }
   

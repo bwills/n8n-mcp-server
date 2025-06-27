@@ -74,9 +74,7 @@ export abstract class BaseNodeHandler extends BaseWorkflowToolHandler {
       
       // Clean up any corrupted connections first (fixes legacy bug)
       const fixedConnections = WorkflowUtils.cleanupCorruptedConnections(workflowCopy);
-      if (fixedConnections > 0) {
-        console.log(`[DEBUG] Fixed ${fixedConnections} corrupted connections in workflow ${workflowId}`);
-      }
+      // Note: Removed debug logging to prevent JSON pollution in MCP responses
       
       // Validate workflow integrity if requested
       if (validateIntegrity) {
