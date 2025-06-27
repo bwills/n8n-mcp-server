@@ -51,13 +51,17 @@ export class N8nApiService {
 
   /**
    * Execute a workflow by ID
-   * 
-   * @param id Workflow ID
-   * @param data Optional data to pass to the workflow
-   * @returns Execution result
    */
-  async executeWorkflow(id: string, data?: Record<string, any>): Promise<any> {
-    return this.client.executeWorkflow(id, data);
+  async executeWorkflow(workflowId: string, inputData?: any): Promise<any> {
+    try {
+      const response = await this.client.getAxiosInstance().post(`/workflows/${workflowId}/run`, {
+        inputData: inputData || {}
+      });
+      return response.data;
+    } catch (error) {
+      const { handleAxiosError } = await import('../errors/index.js');
+      throw handleAxiosError(error, `Failed to execute workflow ${workflowId}`);
+    }
   }
 
   /**
@@ -121,15 +125,55 @@ export class N8nApiService {
   }
 
   /**
-   * Get a specific execution by ID
-   * 
-   * @param id Execution ID
-   * @returns Execution object
+   * Get execution details by ID
    */
-  async getExecution(id: string): Promise<Execution> {
-    return this.client.getExecution(id);
+  async getExecution(executionId: string): Promise<any> {
+    try {
+      const response = await this.client.getAxiosInstance().get(`/executions/${executionId}`);
+      return response.data;
+    } catch (error) {
+      const { handleAxiosError } = await import('../errors/index.js');
+      throw handleAxiosError(error, `Failed to get execution ${executionId}`);
+    }
   }
-  
+
+  /**
+   * List executions with optional filtering
+   */
+  async listExecutions(options: {
+    workflowId?: string;
+    status?: string;
+    limit?: number;
+    includeData?: boolean;
+  } = {}): Promise<any> {
+    try {
+      const params = new URLSearchParams();
+      if (options.workflowId) params.append('workflowId', options.workflowId);
+      if (options.status) params.append('status', options.status);
+      if (options.limit) params.append('limit', options.limit.toString());
+      if (options.includeData) params.append('includeData', 'true');
+
+      const response = await this.client.getAxiosInstance().get(`/executions?${params.toString()}`);
+      return response.data;
+    } catch (error) {
+      const { handleAxiosError } = await import('../errors/index.js');
+      throw handleAxiosError(error, 'Failed to list executions');
+    }
+  }
+
+  /**
+   * Cancel/stop a running execution
+   */
+  async cancelExecution(executionId: string): Promise<any> {
+    try {
+      const response = await this.client.getAxiosInstance().post(`/executions/${executionId}/stop`);
+      return response.data;
+    } catch (error) {
+      const { handleAxiosError } = await import('../errors/index.js');
+      throw handleAxiosError(error, `Failed to cancel execution ${executionId}`);
+    }
+  }
+
   /**
    * Delete an execution
    * 

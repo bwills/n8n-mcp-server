@@ -203,12 +203,31 @@ export class N8nApiClient {
    */
   async updateWorkflow(id: string, workflow: Record<string, any>): Promise<any> {
     try {
-      // Remove read-only properties that cause issues with n8n API v1
+      // Remove read-only properties that cause issues with n8n API
       const workflowToUpdate = { ...workflow };
-      delete workflowToUpdate.id; // Remove id property as it's read-only
-      delete workflowToUpdate.createdAt; // Remove createdAt property as it's read-only
-      delete workflowToUpdate.updatedAt; // Remove updatedAt property as it's read-only
-      delete workflowToUpdate.tags; // Remove tags property as it's read-only
+      
+      // Remove all read-only metadata fields that n8n API rejects
+      delete workflowToUpdate.pinData;
+      delete workflowToUpdate.versionId;
+      delete workflowToUpdate.staticData;
+      delete workflowToUpdate.meta;
+      delete workflowToUpdate.shared;
+      delete workflowToUpdate.createdAt;
+      delete workflowToUpdate.updatedAt;
+      delete workflowToUpdate.id; // ID should be in URL path, not body
+      delete workflowToUpdate.triggerCount;
+      delete workflowToUpdate.isArchived;
+      delete workflowToUpdate.active; // Active is read-only, handle via separate API calls
+      delete workflowToUpdate.tags; // Tags is read-only, handle separately
+      
+      // Clean up settings if present - some settings subfields can be problematic
+      if (workflowToUpdate.settings && typeof workflowToUpdate.settings === 'object') {
+        const cleanedSettings = { ...workflowToUpdate.settings };
+        // Remove any potentially problematic settings fields
+        delete cleanedSettings.callerIds;
+        delete cleanedSettings.callerPolicy;
+        workflowToUpdate.settings = cleanedSettings;
+      }
 
       // Log request for debugging
       if (this.config.debug) {

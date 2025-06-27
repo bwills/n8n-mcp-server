@@ -9,6 +9,41 @@ import { ToolCallResult, ToolDefinition } from '../../types/index.js';
 import { N8nApiError } from '../../errors/index.js';
 
 /**
+ * Clean workflow data for update by removing read-only fields that cause API errors
+ * 
+ * @param workflow The workflow object to clean
+ * @returns Cleaned workflow object safe for n8n API updates
+ */
+function cleanWorkflowForUpdate(workflow: Record<string, any>): Record<string, any> {
+  const cleaned = { ...workflow };
+  
+  // Remove read-only metadata fields that n8n API rejects
+  delete cleaned.pinData;
+  delete cleaned.versionId;
+  delete cleaned.staticData;
+  delete cleaned.meta;
+  delete cleaned.shared;
+  delete cleaned.createdAt;
+  delete cleaned.updatedAt;
+  delete cleaned.id; // ID should be in URL path, not body
+  delete cleaned.triggerCount;
+  delete cleaned.isArchived;
+  delete cleaned.active; // Active is read-only, handle via separate API calls
+  delete cleaned.tags; // Tags is read-only, handle separately
+  
+  // Clean up settings if present - some settings subfields can be problematic
+  if (cleaned.settings && typeof cleaned.settings === 'object') {
+    const cleanedSettings = { ...cleaned.settings };
+    // Remove any potentially problematic settings fields
+    delete cleanedSettings.callerIds;
+    delete cleanedSettings.callerPolicy;
+    cleaned.settings = cleanedSettings;
+  }
+  
+  return cleaned;
+}
+
+/**
  * Handler for the update_workflow tool
  */
 export class UpdateWorkflowHandler extends BaseWorkflowToolHandler {
@@ -39,18 +74,33 @@ export class UpdateWorkflowHandler extends BaseWorkflowToolHandler {
       // Get the current workflow to update
       const currentWorkflow = await this.apiService.getWorkflow(workflowId);
       
-      // Prepare update object with changes
-      const workflowData: Record<string, any> = { ...currentWorkflow };
+      // Clean the current workflow data to remove read-only fields
+      const cleanedWorkflow = cleanWorkflowForUpdate(currentWorkflow);
       
-      // Update fields if provided
-      if (name !== undefined) workflowData.name = name;
-      if (nodes !== undefined) workflowData.nodes = nodes;
-      if (connections !== undefined) workflowData.connections = connections;
-      if (active !== undefined) workflowData.active = active;
-      if (tags !== undefined) workflowData.tags = tags;
+      // Update fields if provided (excluding active and tags - handled separately)
+      if (name !== undefined) cleanedWorkflow.name = name;
+      if (nodes !== undefined) cleanedWorkflow.nodes = nodes;
+      if (connections !== undefined) cleanedWorkflow.connections = connections;
+      // Note: active and tags are read-only and handled separately
       
-      // Update the workflow
-      const updatedWorkflow = await this.apiService.updateWorkflow(workflowId, workflowData);
+      // TODO: Handle tags separately when n8n API supports tag management
+      // For now, tags updates are ignored to avoid API errors
+      if (tags !== undefined) {
+        console.warn('Tags updates are currently not supported due to n8n API limitations. Tags field is read-only.');
+      }
+      
+      // Update the workflow with cleaned data
+      const updatedWorkflow = await this.apiService.updateWorkflow(workflowId, cleanedWorkflow);
+      
+      // Handle activation/deactivation separately if active field was provided
+      let finalWorkflow = updatedWorkflow;
+      if (active !== undefined && active !== currentWorkflow.active) {
+        if (active === true) {
+          finalWorkflow = await this.apiService.activateWorkflow(workflowId);
+        } else {
+          finalWorkflow = await this.apiService.deactivateWorkflow(workflowId);
+        }
+      }
       
       // Build a summary of changes
       const changesArray = [];
@@ -66,9 +116,9 @@ export class UpdateWorkflowHandler extends BaseWorkflowToolHandler {
       
       return this.formatSuccess(
         {
-          id: updatedWorkflow.id,
-          name: updatedWorkflow.name,
-          active: updatedWorkflow.active
+          id: finalWorkflow.id,
+          name: finalWorkflow.name,
+          active: finalWorkflow.active
         },
         `Workflow updated successfully. ${changesSummary}`
       );
@@ -120,6 +170,7 @@ export function getUpdateWorkflowToolDefinition(): ToolDefinition {
         },
       },
       required: ['workflowId'],
+      additionalProperties: true,
     },
   };
 }

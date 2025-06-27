@@ -13,6 +13,7 @@ export interface ToolDefinition {
     type: string;
     properties: Record<string, any>;
     required?: string[];
+    additionalProperties?: boolean;
   };
 }
 
@@ -30,8 +31,8 @@ export interface Workflow {
   id: string;
   name: string;
   active: boolean;
-  nodes: any[];
-  connections: any;
+  nodes: WorkflowNode[];
+  connections: WorkflowConnections;
   createdAt: string;
   updatedAt: string;
   [key: string]: any;
@@ -52,4 +53,83 @@ export interface Execution {
     };
   };
   [key: string]: any;
+}
+
+// Enhanced types for workflow manipulation
+export interface WorkflowNode {
+  id: string;
+  name: string;
+  type: string;
+  typeVersion: number;
+  position: [number, number];
+  parameters: Record<string, any>;
+  credentials?: Record<string, any>;
+  webhookId?: string;
+  [key: string]: any;
+}
+
+export interface NodeConnection {
+  node: string;
+  type: string;
+  index: number;
+}
+
+export interface WorkflowConnections {
+  [nodeId: string]: {
+    [connectionType: string]: NodeConnection[][];
+  };
+}
+
+export interface NodeUpdate {
+  nodeId: string;
+  updates: {
+    name?: string;
+    parameters?: Record<string, any>;
+    position?: [number, number];
+    credentials?: Record<string, any>;
+    [key: string]: any;
+  };
+}
+
+export interface ConnectionSpec {
+  sourceNodeId: string;
+  targetNodeId: string;
+  sourceIndex?: number;
+  targetIndex?: number;
+  connectionType?: string;
+}
+
+export interface NodeValidationResult {
+  isValid: boolean;
+  errors: string[];
+  nodeId?: string;
+}
+
+export interface WorkflowValidationResult {
+  isValid: boolean;
+  errors: string[];
+  nodeErrors: NodeValidationResult[];
+}
+
+// Claude-to-Claude Communication Types
+export interface ClaudeMessage {
+  id: string;
+  timestamp: string;
+  sender: 'claude_sr' | 'claude_jr';
+  message: string;
+  context?: 'technical' | 'planning' | 'debugging' | 'general';
+  responseToId?: string;
+}
+
+export interface ClaudeConversationResponse {
+  success: boolean;
+  message?: string;
+  conversationId?: string;
+  error?: string;
+}
+
+export interface ClaudeMessageHistory {
+  messages: ClaudeMessage[];
+  totalCount: number;
+  lastUpdated: string;
 }

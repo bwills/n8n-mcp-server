@@ -11,13 +11,24 @@ import {
   ListToolsRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
 import { getEnvConfig } from './environment.js';
-import { setupWorkflowTools } from '../tools/workflow/index.js';
+import { WorkflowToolHandler, getWorkflowToolsMap } from '../tools/workflow/index.js';
 import { setupExecutionTools } from '../tools/execution/index.js';
 import { setupResourceHandlers } from '../resources/index.js';
 import { createApiService } from '../api/n8n-client.js';
+import { ClaudeCommunicationHandler } from '../tools/claude/index.js';
 
 // Import types
 import { ToolCallResult } from '../types/index.js';
+
+// Global singleton for Claude communication to maintain conversation state
+let claudeHandlerInstance: ClaudeCommunicationHandler | null = null;
+
+function getClaudeHandlerSingleton(): ClaudeCommunicationHandler {
+  if (!claudeHandlerInstance) {
+    claudeHandlerInstance = new ClaudeCommunicationHandler();
+  }
+  return claudeHandlerInstance;
+}
 
 /**
  * Configure and return an MCP server instance with all tools and resources
@@ -70,12 +81,19 @@ export async function configureServer(): Promise<Server> {
  */
 function setupToolListRequestHandler(server: Server): void {
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    // Combine tools from workflow and execution modules
-    const workflowTools = await setupWorkflowTools();
+    // Get workflow tools from the new system
+    const workflowToolsMap = getWorkflowToolsMap();
+    const workflowTools = Array.from(workflowToolsMap.values());
+    
+    // Get execution tools
     const executionTools = await setupExecutionTools();
 
+    // Get Claude communication tools - use singleton to maintain state
+    const claudeHandler = getClaudeHandlerSingleton();
+    const claudeTools = claudeHandler.getToolDefinitions();
+
     return {
-      tools: [...workflowTools, ...executionTools],
+      tools: [...workflowTools, ...executionTools, ...claudeTools],
     };
   });
 }
@@ -90,29 +108,42 @@ function setupToolCallRequestHandler(server: Server): void {
     const toolName = request.params.name;
     const args = request.params.arguments || {};
 
-    let result: ToolCallResult;
-
     try {
       // Handle "prompts/list" as a special case, returning an empty success response
       // This is to address client calls for a method not central to n8n-mcp-server's direct n8n integration.
       if (toolName === 'prompts/list') {
         return {
-          content: [{ type: 'text', text: 'Prompts list acknowledged.' }], // Or an empty array: content: []
+          content: [{ type: 'text', text: 'Prompts list acknowledged.' }],
           isError: false,
         };
       }
 
-      // Import handlers
-      const { 
-        ListWorkflowsHandler, 
-        GetWorkflowHandler,
-        CreateWorkflowHandler,
-        UpdateWorkflowHandler,
-        DeleteWorkflowHandler,
-        ActivateWorkflowHandler,
-        DeactivateWorkflowHandler
-      } = await import('../tools/workflow/index.js');
-      
+      // Check if it's a Claude communication tool - USE SINGLETON to maintain conversation state
+      const claudeToolNames = ['send_message_to_claude', 'get_claude_conversation', 'clear_claude_conversation', 'get_claude_conversation_stats'];
+      if (claudeToolNames.includes(toolName)) {
+        console.error(`Handling Claude tool: ${toolName}`);
+        const result = await getClaudeHandlerSingleton().handleToolCall(toolName, args);
+        console.error('Claude tool result:', JSON.stringify(result, null, 2));
+        
+        return {
+          content: result.content,
+          isError: result.isError || false,
+        };
+      }
+
+      // Check if it's a workflow tool
+      const workflowToolsMap = getWorkflowToolsMap();
+      if (workflowToolsMap.has(toolName)) {
+        const workflowHandler = new WorkflowToolHandler();
+        const result = await workflowHandler.handle(toolName, args);
+        
+        return {
+          content: result.content,
+          isError: result.isError,
+        };
+      }
+
+      // Handle execution tools
       const {
         ListExecutionsHandler,
         GetExecutionHandler,
@@ -120,29 +151,9 @@ function setupToolCallRequestHandler(server: Server): void {
         RunWebhookHandler
       } = await import('../tools/execution/index.js');
       
-      // Route the tool call to the appropriate handler
-      if (toolName === 'list_workflows') {
-        const handler = new ListWorkflowsHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'get_workflow') {
-        const handler = new GetWorkflowHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'create_workflow') {
-        const handler = new CreateWorkflowHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'update_workflow') {
-        const handler = new UpdateWorkflowHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'delete_workflow') {
-        const handler = new DeleteWorkflowHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'activate_workflow') {
-        const handler = new ActivateWorkflowHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'deactivate_workflow') {
-        const handler = new DeactivateWorkflowHandler();
-        result = await handler.execute(args);
-      } else if (toolName === 'list_executions') {
+      let result: ToolCallResult;
+      
+      if (toolName === 'list_executions') {
         const handler = new ListExecutionsHandler();
         result = await handler.execute(args);
       } else if (toolName === 'get_execution') {
@@ -158,7 +169,6 @@ function setupToolCallRequestHandler(server: Server): void {
         throw new Error(`Unknown tool: ${toolName}`);
       }
 
-      // Converting to MCP SDK expected format
       return {
         content: result.content,
         isError: result.isError,
