@@ -167,27 +167,30 @@ export function removeNodeFromWorkflow(workflow: Workflow, nodeId: string): Conn
   // Find and remove all connections involving this node
   const removedConnections: ConnectionSpec[] = [];
   
+  // Get the node name before removal (needed for connection cleanup)
+  const nodeToRemove = findNodeById(workflow, nodeId);
+  const nodeNameToRemove = nodeToRemove?.name;
+  
   // Remove outgoing connections (where this node is the source)
-  if (workflow.connections[nodeId]) {
-    for (const [connectionType, connectionArrays] of Object.entries(workflow.connections[nodeId])) {
+  // IMPORTANT: n8n connections use node NAMES as keys, not node IDs
+  if (nodeNameToRemove && workflow.connections[nodeNameToRemove]) {
+    for (const [connectionType, connectionArrays] of Object.entries(workflow.connections[nodeNameToRemove])) {
       for (const connectionArray of connectionArrays) {
         for (const connection of connectionArray) {
           removedConnections.push({
             sourceNodeId: nodeId,
-            targetNodeId: connection.node,
+            targetNodeId: getNodeIdByName(workflow, connection.node) || connection.node,
             sourceIndex: connection.index,
             connectionType
           });
         }
       }
     }
-    delete workflow.connections[nodeId];
+    delete workflow.connections[nodeNameToRemove];
   }
   
   // Remove incoming connections (where this node is the target)
-  // Note: connections use node NAMES as keys, but we need to handle both ID and name removal
-  const nodeToRemove = findNodeById(workflow, nodeId);
-  const nodeNameToRemove = nodeToRemove?.name;
+  // Note: connections use node NAMES as keys
   
   for (const [sourceNodeName, connections] of Object.entries(workflow.connections)) {
     for (const [connectionType, connectionArrays] of Object.entries(connections)) {
@@ -220,11 +223,6 @@ export function removeNodeFromWorkflow(workflow: Workflow, nodeId: string): Conn
     if (Object.keys(connections).length === 0) {
       delete workflow.connections[sourceNodeName];
     }
-  }
-  
-  // Also remove any outgoing connections from this node (by name)
-  if (nodeNameToRemove && workflow.connections[nodeNameToRemove]) {
-    delete workflow.connections[nodeNameToRemove];
   }
   
   return removedConnections;
@@ -354,6 +352,68 @@ export function removeConnectionFromWorkflow(workflow: Workflow, connection: Con
   }
   
   return true;
+}
+
+/**
+ * Clean up corrupted connections that use node IDs as keys instead of names
+ * This fixes workflows that were corrupted by the previous bug in removeNodeFromWorkflow
+ * 
+ * @param workflow The workflow to clean up
+ * @returns Number of corrupted connections fixed
+ */
+export function cleanupCorruptedConnections(workflow: Workflow): number {
+  let fixedCount = 0;
+  const connectionsToFix: Array<{ oldKey: string, newKey: string, connections: { [connectionType: string]: NodeConnection[][] } }> = [];
+  
+  // Find connection keys that are node IDs instead of names
+  for (const [connectionKey, connections] of Object.entries(workflow.connections)) {
+    // Check if this key is a node ID (exists in nodes array by ID but not by name)
+    const nodeById = findNodeById(workflow, connectionKey);
+    const nodeByName = findNodeByName(workflow, connectionKey);
+    
+    if (nodeById && !nodeByName) {
+      // This is a node ID being used as a connection key - needs fixing
+      connectionsToFix.push({
+        oldKey: connectionKey,
+        newKey: nodeById.name,
+        connections
+      });
+    }
+  }
+  
+  // Apply the fixes
+  for (const fix of connectionsToFix) {
+    // Remove the corrupted entry
+    delete workflow.connections[fix.oldKey];
+    
+    // Add it back with the correct node name as key
+    if (!workflow.connections[fix.newKey]) {
+      workflow.connections[fix.newKey] = fix.connections;
+      fixedCount++;
+    } else {
+      // Merge if there's already a connection with the correct name
+      for (const [connectionType, connectionArrays] of Object.entries(fix.connections)) {
+        if (Array.isArray(connectionArrays)) {
+          if (!workflow.connections[fix.newKey][connectionType]) {
+            workflow.connections[fix.newKey][connectionType] = connectionArrays;
+          } else {
+            // Merge connection arrays
+            for (let i = 0; i < connectionArrays.length; i++) {
+              if (!workflow.connections[fix.newKey][connectionType][i]) {
+                workflow.connections[fix.newKey][connectionType][i] = connectionArrays[i];
+              } else {
+                // Merge individual connections
+                workflow.connections[fix.newKey][connectionType][i].push(...connectionArrays[i]);
+              }
+            }
+          }
+        }
+      }
+      fixedCount++;
+    }
+  }
+  
+  return fixedCount;
 }
 
 /**

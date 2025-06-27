@@ -7,6 +7,8 @@ A comprehensive Model Context Protocol (MCP) server that allows AI assistants to
 ## 🚀 What's New - Major Enhancements
 
 ### **✅ Critical Issues Resolved**
+- **Fixed connection validation bug** - No more "Connection source node does not exist" errors
+- **Automatic workflow repair** - Corrupted workflows are automatically fixed when accessed
 - **Fixed all n8n API errors** - No more "additional properties" or "read-only field" errors
 - **Granular workflow editing** - Update individual nodes/connections without full workflow transfers
 - **Smart field cleaning** - Automatic removal of problematic read-only fields
