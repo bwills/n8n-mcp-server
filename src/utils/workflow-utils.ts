@@ -28,7 +28,18 @@ export function generateNodeId(workflow: Workflow, prefix: string = 'node'): str
 }
 
 /**
- * Find a node by ID in a workflow
+ * Find a node by its name
+ * 
+ * @param workflow The workflow to search
+ * @param nodeName The node name to find
+ * @returns The node if found, undefined otherwise
+ */
+export function findNodeByName(workflow: Workflow, nodeName: string): WorkflowNode | undefined {
+  return workflow.nodes.find(node => node.name === nodeName);
+}
+
+/**
+ * Find a node by its ID
  * 
  * @param workflow The workflow to search
  * @param nodeId The node ID to find
@@ -36,6 +47,30 @@ export function generateNodeId(workflow: Workflow, prefix: string = 'node'): str
  */
 export function findNodeById(workflow: Workflow, nodeId: string): WorkflowNode | undefined {
   return workflow.nodes.find(node => node.id === nodeId);
+}
+
+/**
+ * Get node name from node ID
+ * 
+ * @param workflow The workflow to search
+ * @param nodeId The node ID
+ * @returns The node name if found, undefined otherwise
+ */
+export function getNodeNameById(workflow: Workflow, nodeId: string): string | undefined {
+  const node = findNodeById(workflow, nodeId);
+  return node?.name;
+}
+
+/**
+ * Get node ID from node name
+ * 
+ * @param workflow The workflow to search
+ * @param nodeName The node name
+ * @returns The node ID if found, undefined otherwise
+ */
+export function getNodeIdByName(workflow: Workflow, nodeName: string): string | undefined {
+  const node = findNodeByName(workflow, nodeName);
+  return node?.id;
 }
 
 /**
@@ -150,14 +185,19 @@ export function removeNodeFromWorkflow(workflow: Workflow, nodeId: string): Conn
   }
   
   // Remove incoming connections (where this node is the target)
-  for (const [sourceNodeId, connections] of Object.entries(workflow.connections)) {
+  // Note: connections use node NAMES as keys, but we need to handle both ID and name removal
+  const nodeToRemove = findNodeById(workflow, nodeId);
+  const nodeNameToRemove = nodeToRemove?.name;
+  
+  for (const [sourceNodeName, connections] of Object.entries(workflow.connections)) {
     for (const [connectionType, connectionArrays] of Object.entries(connections)) {
       for (let i = connectionArrays.length - 1; i >= 0; i--) {
         const connectionArray = connectionArrays[i];
         for (let j = connectionArray.length - 1; j >= 0; j--) {
-          if (connectionArray[j].node === nodeId) {
+          // Check if connection targets the node being removed (by name)
+          if (connectionArray[j].node === nodeNameToRemove) {
             removedConnections.push({
-              sourceNodeId,
+              sourceNodeId: getNodeIdByName(workflow, sourceNodeName) || sourceNodeName,
               targetNodeId: nodeId,
               sourceIndex: i,
               targetIndex: connectionArray[j].index,
@@ -178,8 +218,13 @@ export function removeNodeFromWorkflow(workflow: Workflow, nodeId: string): Conn
     }
     // Remove empty source nodes
     if (Object.keys(connections).length === 0) {
-      delete workflow.connections[sourceNodeId];
+      delete workflow.connections[sourceNodeName];
     }
+  }
+  
+  // Also remove any outgoing connections from this node (by name)
+  if (nodeNameToRemove && workflow.connections[nodeNameToRemove]) {
+    delete workflow.connections[nodeNameToRemove];
   }
   
   return removedConnections;
@@ -209,43 +254,51 @@ export function updateNodeInWorkflow(workflow: Workflow, nodeId: string, updates
  * Add a connection between two nodes
  * 
  * @param workflow The workflow to modify
- * @param connection The connection specification
+ * @param connection The connection specification (expects node IDs, converts to names for n8n)
  * @returns True if connection was added successfully
  */
 export function addConnectionToWorkflow(workflow: Workflow, connection: ConnectionSpec): boolean {
   const { sourceNodeId, targetNodeId, sourceIndex = 0, targetIndex = 0, connectionType = 'main' } = connection;
   
-  // Validate both nodes exist
+  // Validate both nodes exist by ID
   const validation = validateNodesExist(workflow, [sourceNodeId, targetNodeId]);
   if (!validation.isValid) {
     return false;
   }
   
-  // Initialize connection structure if needed
-  if (!workflow.connections[sourceNodeId]) {
-    workflow.connections[sourceNodeId] = {};
+  // Convert node IDs to names (n8n uses names in connections)
+  const sourceNodeName = getNodeNameById(workflow, sourceNodeId);
+  const targetNodeName = getNodeNameById(workflow, targetNodeId);
+  
+  if (!sourceNodeName || !targetNodeName) {
+    return false;
   }
   
-  if (!workflow.connections[sourceNodeId][connectionType]) {
-    workflow.connections[sourceNodeId][connectionType] = [];
+  // Initialize connection structure if needed (using node names)
+  if (!workflow.connections[sourceNodeName]) {
+    workflow.connections[sourceNodeName] = {};
+  }
+  
+  if (!workflow.connections[sourceNodeName][connectionType]) {
+    workflow.connections[sourceNodeName][connectionType] = [];
   }
   
   // Ensure we have enough source index arrays
-  while (workflow.connections[sourceNodeId][connectionType].length <= sourceIndex) {
-    workflow.connections[sourceNodeId][connectionType].push([]);
+  while (workflow.connections[sourceNodeName][connectionType].length <= sourceIndex) {
+    workflow.connections[sourceNodeName][connectionType].push([]);
   }
   
   // Add the connection
-  const connectionArray = workflow.connections[sourceNodeId][connectionType][sourceIndex];
+  const connectionArray = workflow.connections[sourceNodeName][connectionType][sourceIndex];
   
-  // Check if connection already exists
+  // Check if connection already exists (using target node name)
   const existingConnection = connectionArray.find(conn => 
-    conn.node === targetNodeId && conn.index === targetIndex && conn.type === connectionType
+    conn.node === targetNodeName && conn.index === targetIndex && conn.type === connectionType
   );
   
   if (!existingConnection) {
     connectionArray.push({
-      node: targetNodeId,
+      node: targetNodeName,
       type: connectionType,
       index: targetIndex
     });
@@ -258,19 +311,27 @@ export function addConnectionToWorkflow(workflow: Workflow, connection: Connecti
  * Remove a connection between two nodes
  * 
  * @param workflow The workflow to modify
- * @param connection The connection specification
+ * @param connection The connection specification (expects node IDs, converts to names for n8n)
  * @returns True if connection was removed successfully
  */
 export function removeConnectionFromWorkflow(workflow: Workflow, connection: ConnectionSpec): boolean {
   const { sourceNodeId, targetNodeId, sourceIndex = 0, targetIndex = 0, connectionType = 'main' } = connection;
   
-  if (!workflow.connections[sourceNodeId]?.[connectionType]?.[sourceIndex]) {
+  // Convert node IDs to names (n8n uses names in connections)
+  const sourceNodeName = getNodeNameById(workflow, sourceNodeId);
+  const targetNodeName = getNodeNameById(workflow, targetNodeId);
+  
+  if (!sourceNodeName || !targetNodeName) {
     return false;
   }
   
-  const connectionArray = workflow.connections[sourceNodeId][connectionType][sourceIndex];
+  if (!workflow.connections[sourceNodeName]?.[connectionType]?.[sourceIndex]) {
+    return false;
+  }
+  
+  const connectionArray = workflow.connections[sourceNodeName][connectionType][sourceIndex];
   const connectionIndex = connectionArray.findIndex(conn => 
-    conn.node === targetNodeId && conn.index === targetIndex && conn.type === connectionType
+    conn.node === targetNodeName && conn.index === targetIndex && conn.type === connectionType
   );
   
   if (connectionIndex === -1) {
@@ -281,13 +342,13 @@ export function removeConnectionFromWorkflow(workflow: Workflow, connection: Con
   
   // Clean up empty structures
   if (connectionArray.length === 0) {
-    workflow.connections[sourceNodeId][connectionType].splice(sourceIndex, 1);
+    workflow.connections[sourceNodeName][connectionType].splice(sourceIndex, 1);
     
-    if (workflow.connections[sourceNodeId][connectionType].length === 0) {
-      delete workflow.connections[sourceNodeId][connectionType];
+    if (workflow.connections[sourceNodeName][connectionType].length === 0) {
+      delete workflow.connections[sourceNodeName][connectionType];
       
-      if (Object.keys(workflow.connections[sourceNodeId]).length === 0) {
-        delete workflow.connections[sourceNodeId];
+      if (Object.keys(workflow.connections[sourceNodeName]).length === 0) {
+        delete workflow.connections[sourceNodeName];
       }
     }
   }
